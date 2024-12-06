@@ -51,7 +51,7 @@ class VXVERSE(BaseModel):
 
         ckpt_dir = cfg['ckpt']
         if not osp.isdir(ckpt_dir):
-            cache_path = get_cache_path(ckpt_dir)
+            cache_path = get_cache_path(ckpt_dir, repo_type='models')
             if cache_path is not None:
                 ckpt_dir = cache_path
             else:

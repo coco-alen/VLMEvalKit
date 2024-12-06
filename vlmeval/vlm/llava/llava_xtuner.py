@@ -40,7 +40,7 @@ class LLaVA_XTuner(BaseModel):
             raise err
 
         if not osp.isdir(llava_path):
-            cache_path = get_cache_path(llava_path)
+            cache_path = get_cache_path(llava_path, repo_type='models')
             if cache_path is not None:
                 llava_path = cache_path
             else:

@@ -39,10 +39,10 @@ class OpenFlamingo(BaseModel):
                     if not osp.exists(ckpt_pth):
                         raise ValueError(f'File {ckpt_pth} does not exist. ')
             elif splitlen(ckpt_pth, '/') == 2:
-                cache_path = get_cache_path(ckpt_pth)
+                cache_path = get_cache_path(ckpt_pth, repo_type='models')
                 if cache_path is None:
                     snapshot_download(ckpt_pth)
-                cache_path = get_cache_path(ckpt_pth)
+                cache_path = get_cache_path(ckpt_pth, repo_type='models')
                 if cache_path is None:
                     raise ValueError(f'Directory {cache_path} does not exist. ')
                 else:
