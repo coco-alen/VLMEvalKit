@@ -3,6 +3,26 @@ from vlmeval.api.base import BaseAPI
 from vlmeval.dataset import img_root_map
 from vlmeval.dataset import DATASET_TYPE
 
+URLS = {
+    "test1": "http://101.230.144.192:21207/generate",
+}
+
+SYSTEM_PROMPT = "<|im_start|>system\n你是商汤科技开发的日日新多模态大模型，英文名叫Sensechat，是一个有用无害的人工智能助手。<|im_end|>\n"
+USER_START = "<|im_start|>user\n"
+ASSISTANT_START = "<|im_start|>assistant\n"
+IM_END = "<|im_end|>\n"
+IMG_TAG = "<img></img>\n"
+AUDIO_TAG = "<audio></audio>\n"
+
+
+def handle_url(url):
+    if url.startswith("file://"):
+        with open(url[7:], "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    else:
+        req = requests.get(url)
+        return base64.b64encode(req.content).decode()
+
 
 class SenseChatVisionWrapper(BaseAPI):
 
@@ -40,7 +60,7 @@ class SenseChatVisionWrapper(BaseAPI):
         """
         ROOT = LMUDataRoot()
         assert isinstance(dataset, str)
-        img_root = osp.join(ROOT, 'images', img_root_map[dataset] if dataset in img_root_map else dataset)
+        img_root = osp.join(ROOT, 'images', img_root_map(dataset))
         os.makedirs(img_root, exist_ok=True)
         if 'image' in line:
             if isinstance(line['image'], list):
@@ -141,9 +161,9 @@ class SenseChatVisionWrapper(BaseAPI):
             for key, item in options.items():
                 question += f'\n{key}. {item}'
             prompt = {
-                'multiple-choice': 'You are an expert in {}. Please solve the university-level {} examination question, which includes interleaved images and text. Your output should be divided into two parts: First, reason about the correct answer. Then write the answer in the following format where X is exactly one of the choices given by the problem: "ANSWER: X". If you are uncertain of the correct answer, guess the most likely one.',  # noqa: E501
-                'open': 'You are an expert in {}. Please solve the university-level {} examination question, which includes interleaved images and text. Your output should be divided into two parts: First, reason about the correct answer. Then write the answer in the following format where X is only the answer and nothing else: "ANSWER: X"'  # noqa: E501
-            }
+                'multiple-choice': 'Answer with carefully thought step by step. Apply the thinking process recursively at both macro and micro levels. Verify consistency of reasoning and look for potential flaws or gaps during thinking. When realize mistakes, explain why the previous thinking was incorrect, fix it and then continue thinking.\n\n',  # noqa: E501
+                'open': 'Answer with carefully thought step by step. Apply the thinking process recursively at both macro and micro levels. Verify consistency of reasoning and look for potential flaws or gaps during thinking. When realize mistakes, explain why the previous thinking was incorrect, fix it and then continue thinking.\n\n'  # noqa: E501
+            }  # cot prompt
             subject = '_'.join(line['id'].split('_')[1:-1])
             prompt = prompt[line['question_type']].format(subject, subject) + '\n' + question
         else:
@@ -168,7 +188,7 @@ class SenseChatVisionWrapper(BaseAPI):
         inputs = [inputs] if isinstance(inputs, str) else inputs
         dataset = kwargs.get('dataset', None)
 
-        if dataset is not None and listinstr(['ChartQA_TEST'], dataset):
+        if dataset is not None and listinstr(['ChartQA_TEST','MathVista_MINI'], dataset):
             self.max_num = 12
         elif dataset is not None and listinstr(['DocVQA_VAL', 'DocVQA_TEST'], dataset):
             self.max_num = 18
@@ -182,14 +202,15 @@ class SenseChatVisionWrapper(BaseAPI):
         elif listinstr(['AI2D_TEST'], dataset):
             self.max_new_tokens = 10
         elif 'MMMU' in dataset:
-            self.max_new_tokens = 1024
+            self.max_new_tokens = 4096  # 1024
         elif 'MMBench' in dataset:
             self.max_new_tokens = 100
+        elif 'MathVista_MINI' in dataset:
+            self.max_new_tokens = 4096
 
         prompt, image = self.message_to_promptimg(message=inputs, dataset=dataset)
 
-        url = 'https://api.sensenova.cn/v1/llm/chat-completions'
-        api_secret_key = self.encode_jwt_token(self.ak, self.sk)
+        api_secret_key = self.encode_jwt_token(self.ak, self.sk)  # noqa
 
         content = [{
             'image_base64': self.image_to_base64(item),
@@ -208,41 +229,87 @@ class SenseChatVisionWrapper(BaseAPI):
             'type': 'text'
         })
 
-        message = [{'content': content, 'role': 'user'}]
+        messages = [{'content': content, 'role': 'user'}]
 
-        data = {
-            'messages': message,
-            'max_new_tokens': self.max_new_tokens,
-            'model': self.model,
-            'stream': False,
+        url = URLS['test1']
+        query = ""
+        if messages[0]["role"] == "system":
+            if messages[0]["content"] != "":
+                query += "<|im_start|>system\n" + messages[0]["content"] + "<|im_end|>\n"
+            messages = messages[1:]
+        else:
+            query += SYSTEM_PROMPT
+
+        images = []
+        for message in messages:
+            if message["role"] == "user":
+                query += USER_START
+                if isinstance(message["content"], list):
+                    query_content = ""
+                    img_cnt = 0
+                    for content in message["content"]:
+                        if content["type"] == "image_base64":
+                            content["type"] = "image_url"
+                        if content["type"] == "image_url":
+                            query += IMG_TAG
+                            img_cnt += 1
+                            images.append(
+                                {"type": "base64", "data": content["image_base64"]}
+                            )
+                        elif content["type"] == "text":
+                            query_content = content["text"]
+                        else:
+                            raise ValueError("type must be text, image_url")
+                    if img_cnt >= 2:
+                        query += f"用户本轮上传了{img_cnt}张图\n"
+                    query += query_content + IM_END
+                else:
+                    query += message["content"] + IM_END
+            elif message["role"] == "assistant":
+                query += ASSISTANT_START
+                query += message["content"] + IM_END
+            else:
+                raise ValueError("role must be user or assistant")
+        query += ASSISTANT_START
+        play_load = {
+            "inputs": query,
+            "parameters": {
+                "temperature": 0.0,
+                "top_k": 0,
+                "top_p": 1.0,
+                "repetition_penalty": 1.05,
+                "max_new_tokens": self.max_new_tokens,
+                "do_sample": False,
+                "stop_sequences": ["<|im_end|>"],
+            },
         }
-        headers = {
-            'Content-type': 'application/json',
-            'Authorization': 'Bearer ' + api_secret_key
-        }
+        multimodal_params = {}
+
+        if images:
+            multimodal_params["images"] = images
+        if multimodal_params:
+            play_load["multimodal_params"] = multimodal_params
+        data = json.dumps(play_load)
+        headers = {"Content-Type": "application/json"}
 
         response = requests.post(
             url,
             headers=headers,
-            json=data,
+            data=data,
         )
-        request_id = response.headers['x-request-id']
 
         time.sleep(1)
         try:
             assert response.status_code == 200
-            response = response.json()['data']['choices'][0]['message'].strip()
-            if dataset is not None and 'MMMU' in dataset:
-                response = response.split('ANSWER: ')[-1].strip()
-            if self.verbose:
-                self.logger.info(f'inputs: {inputs}\nanswer: {response}')
+            response = response.json()['generated_text'][0].strip()
+            # if self.verbose:
+            #     self.logger.info(f'inputs: {query}\nanswer: {response}')
             return 0, response, 'Succeeded! '
         except Exception as err:
             if self.verbose:
                 self.logger.error('---------------------------ERROR---------------------------')
                 self.logger.error(response.json())
-                self.logger.error(f'{type(err)}: {err}')
-                self.logger.error('---------------------------request_id---------------------------' + request_id)
+                self.logger.error(err)
                 self.logger.error(
                     'api error' + response.json()['error']['message']
                     + str([input['value'] if input['type'] == 'image' else None for input in inputs])
