@@ -54,31 +54,49 @@ class llama_vision(BaseModel):
             raise e
 
         rank, world_size = get_rank_and_world_size()
+        self.quant_stage = kwargs.get('quant_stage', "")
+        del kwargs['quant_stage']
 
-        if '11b' in model_path.lower() and auto_split_flag():
-            assert world_size == 1, 'We only support world_size == 1 when AUTO_SPLIT is set for Llama-3.2-11B'
-            logging.warning('Currently, we only support to split the 11B model across all GPUs.')
-            self.model = MllamaForConditionalGeneration.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                device_map='auto',
-            ).eval()
-        elif '90b' in model_path.lower():
-            device_map = self.split_model()
-            self.model = MllamaForConditionalGeneration.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                device_map=device_map,
-            ).eval()
+
+        if self.quant_stage == "":
+            if '11b' in model_path.lower() and auto_split_flag():
+                assert world_size == 1, 'We only support world_size == 1 when AUTO_SPLIT is set for Llama-3.2-11B'
+                logging.warning('Currently, we only support to split the 11B model across all GPUs.')
+                self.model = MllamaForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map='auto',
+                ).eval()
+            elif '90b' in model_path.lower():
+                device_map = self.split_model()
+                self.model = MllamaForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map=device_map,
+                ).eval()
+            else:
+                self.model = MllamaForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map='cpu',
+                    **kwargs
+                ).eval().to("cuda")
         else:
             self.model = MllamaForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.bfloat16,
+                    device_map='cpu',
+                ).eval().to("cuda")
+            self.model_quant = MllamaForConditionalGeneration.from_pretrained(
                 model_path,
                 torch_dtype=torch.bfloat16,
                 device_map='cpu',
-            ).cuda().eval()
+                **kwargs
+            ).eval().to("cuda")
 
         self.device = 'cuda'
         self.processor = AutoProcessor.from_pretrained(model_path)
+        kwargs = {}
         if 'Instruct' in model_path or 'cot' in model_path or 'CoT' in model_path:
             kwargs_default = dict(do_sample=True, temperature=0.6, top_p=0.9)
         else:
@@ -193,6 +211,7 @@ class llama_vision(BaseModel):
                 {'type': 'text', 'text': prompt}
             ]}
         ]
+
         input_text = self.processor.apply_chat_template(messages, add_generation_prompt=True)
         inputs = self.processor(image, input_text, return_tensors='pt').to(self.device)
         if not self.use_custom_prompt(dataset):
@@ -202,5 +221,98 @@ class llama_vision(BaseModel):
                 self.kwargs['max_new_tokens'] = 512
         if "cot" in self.model_name or "CoT" in self.model_name:
             self.kwargs['max_new_tokens'] = 2048
-        output = self.model.generate(**inputs, **self.kwargs)
+        # output = self.model.generate(**inputs, **self.kwargs)
+        output = self.custom_generate(inputs, self.kwargs)
         return self.processor.decode(output[0][inputs['input_ids'].shape[1]:]).replace('<|eot_id|>', '')
+        
+
+    def get_llm_outText(self, gen_ids):
+        """
+        Print the generated text from the model.
+        """
+        completion_text = self.processor.decode(gen_ids, skip_special_tokens=True)
+        return completion_text
+
+    def top_p_process(self, scores, top_p=1.0):
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(scores, descending=False)
+            cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+
+            # Remove tokens with cumulative top_p above the threshold (token with 0 are kept)
+            sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
+            # Keep at least min_tokens_to_keep
+            sorted_indices_to_remove[..., -1 :] = 0
+
+            # scatter sorted tensors to original indexing
+            indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+            scores_processed = scores.masked_fill(indices_to_remove, -float("Inf"))
+            return scores_processed
+        else:
+            return scores
+
+    def custom_generate(self, inputs, kwargs):
+        # print("\n==============================\n")
+        model = self.model
+        prefill_input_ids = inputs["input_ids"]
+        max_new_tokens = kwargs.get("max_new_tokens", 2048)
+        temperature = 0.6
+        top_p=0.9
+        past_key_values = None
+        with torch.no_grad():
+            # === Prefill step: Run the prompt through the model to get the initial KV cache ===
+            # The 'input_ids' here are the tokens for your prompt.
+            outputs = model(**inputs, use_cache=True, past_key_values=past_key_values)
+            
+            # Retrieve the cached key/value pairs
+            past_key_values = outputs.past_key_values
+            
+            # We'll start our generated sequence with the prefill tokens.
+            # (If you are generating multiple sequences per prompt, this example assumes a batch dimension.)
+            generated = prefill_input_ids
+            # print(self.get_llm_outText(generated[0]))
+            # === Loop to generate new tokens one by one ===
+            for idx in range(max_new_tokens):
+
+                next_input_ids = generated[:, -1].unsqueeze(-1)
+
+                outputs = model(input_ids=next_input_ids, use_cache=True, past_key_values=past_key_values)
+                logits = outputs.logits  # shape: (batch_size, 1, vocab_size)
+                past_key_values = outputs.past_key_values  # update the KV cache
+
+                next_token_logits = logits[:, -1, :]  # shape: (batch_size, vocab_size)
+
+                # === Sampling step ===
+                if temperature > 0.0:
+                    next_token_logits = next_token_logits / temperature
+                    next_token_logits = self.top_p_process(next_token_logits, top_p=top_p)
+                    probs = torch.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+
+                # print(self.get_llm_outText(next_token[0]), end="")
+                generated = torch.cat((generated, next_token), dim=-1)
+                # sign = self.get_llm_outText(generated[0,-4:])
+                # sign2 = self.get_llm_outText(generated[0,-5:])
+                # if sign == "<SUMMARY>" or sign == "</SUMMARY>" or sign == "<CAPTION>" or sign == "<\CAPTION>" or sign2=="<REASONING>" or sign2=="<\REASONING>":
+                #     print("===")
+                if self.quant_stage == "summary":
+                    if self.get_llm_outText(generated[0,-4:]).strip() == "<SUMMARY>":
+                        model = self.model_quant
+                    elif self.get_llm_outText(generated[0,-4:]).strip() == "</SUMMARY>":
+                        model = self.model
+                if self.quant_stage == "reasoning":
+                    if self.get_llm_outText(generated[0,-5:]).strip() == "<REASONING>":
+                        model = self.model_quant
+                    elif self.get_llm_outText(generated[0,-5:]).strip() == "</REASONING>":
+                        model = self.model
+                if self.quant_stage == "caption":
+                    if self.get_llm_outText(generated[0,-4:]).strip() == "<CAPTION>":
+                        model = self.model_quant
+                    elif self.get_llm_outText(generated[0,-4:]).strip() == "</CAPTION>":
+                        model = self.model
+
+                if (next_token == self.processor.tokenizer.eos_token_id).any():
+                    break
+        return generated

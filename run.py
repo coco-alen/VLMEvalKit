@@ -11,6 +11,7 @@ from vlmeval.inference_video import infer_data_job_video
 from vlmeval.inference_mt import infer_data_job_mt
 from vlmeval.smp import *
 from vlmeval.utils.result_transfer import MMMU_result_transfer, MMTBench_result_transfer
+from transformers import BitsAndBytesConfig
 
 def build_model_from_config(cfg, model_name):
     import vlmeval.api
@@ -148,6 +149,8 @@ You can launch the evaluation by setting either --data and --model or --config.
     parser.add_argument('--reuse', action='store_true')
     # Reuse-aux: if set, when reuse is True, will also reuse the auxiliary evaluation files
     parser.add_argument('--reuse-aux', type=bool, default=True, help='reuse auxiliary evaluation files')
+    parser.add_argument('--qbits', type=int, default=16, choices=[3,4,8,16], help='quantization bits for the model')
+    parser.add_argument('--quant_stage', type=str, default="", choices=["","summary","caption","reasoning"], help='quantization bits for the model')
 
     args = parser.parse_args()
     return args
@@ -210,6 +213,22 @@ def main():
 
         if use_config:
             model = build_model_from_config(cfg['model'], model_name)
+        else:
+            kwargs = {}
+            if args.qbits == 8:
+                kwargs['load_in_8bit'] = True
+            elif args.qbits == 4:
+                kwargs['quantization_config'] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    # bnb_4bit_compute_dtype=torch.int8,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type='nf4'
+                )
+            kwargs['quant_stage'] = args.quant_stage
+
+            model = supported_VLM[model_name](**kwargs)
+            print(model.model)
 
         for _, dataset_name in enumerate(args.data):
             if world_size > 1:
