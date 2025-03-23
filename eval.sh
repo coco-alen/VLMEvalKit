@@ -9,6 +9,7 @@ CUDA_VISIBLE_DEVICES=2 python run.py \
     --data HallusionBench\
     --model LLaVA-CoT \
     --work-dir ./test \
+    --quant_kv_stage "reasoning" \
     --qbits 4 
 
 # torchrun --nproc-per-node=8 run.py \

@@ -55,8 +55,10 @@ class llama_vision(BaseModel):
 
         rank, world_size = get_rank_and_world_size()
         self.quant_stage = kwargs.get('quant_stage', "")
+        self.quant_kv_stage = kwargs.get('quant_kv_stage', "")
+        self.linear_quantizer = LinearQuantize()
         del kwargs['quant_stage']
-
+        del kwargs['quant_kv_stage']
 
         if self.quant_stage == "":
             if '11b' in model_path.lower() and auto_split_flag():
@@ -298,7 +300,7 @@ class llama_vision(BaseModel):
                     next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
 
-                # print(self.get_llm_outText(next_token[0]), end="")
+                print(self.get_llm_outText(next_token[0]), end="")
                 generated = torch.cat((generated, next_token), dim=-1)
                 # sign = self.get_llm_outText(generated[0,-4:])
                 # sign2 = self.get_llm_outText(generated[0,-5:])
@@ -320,6 +322,92 @@ class llama_vision(BaseModel):
                     elif self.get_llm_outText(generated[0,-4:]).strip() == "</CAPTION>":
                         model = self.model
 
+
+                if self.quant_kv_stage == "summary":
+                    quantKV_count = 0
+                    count_start = False
+                    if self.get_llm_outText(generated[0,-4:]).strip() == "<SUMMARY>":
+                        count_start = True
+                    elif self.get_llm_outText(generated[0,-4:]).strip() == "</SUMMARY>":
+                        self.quant_lastN_kv_cache(past_key_values, quantKV_count)
+                        quantKV_count = 0
+                        count_start = False
+                    if count_start:
+                        quantKV_count += 1
+                if self.quant_kv_stage == "reasoning":
+                    quantKV_count = 0
+                    count_start = False
+                    if self.get_llm_outText(generated[0,-5:]).strip() == "<REASONING>":
+                        count_start = True
+                    elif self.get_llm_outText(generated[0,-5:]).strip() == "</REASONING>":
+                        self.quant_lastN_kv_cache(past_key_values, quantKV_count)
+                        quantKV_count = 0
+                        count_start = False
+                    if count_start:
+                        quantKV_count += 1
+                if self.quant_kv_stage == "caption":
+                    quantKV_count = 0
+                    count_start = False
+                    if self.get_llm_outText(generated[0,-4:]).strip() == "<CAPTION>":
+                        count_start = True
+                    elif self.get_llm_outText(generated[0,-4:]).strip() == "</CAPTION>":
+                        self.quant_lastN_kv_cache(past_key_values, quantKV_count)
+                        quantKV_count = 0
+                        count_start = False
+                    if count_start:
+                        quantKV_count += 1
+
                 if (next_token == self.processor.tokenizer.eos_token_id).any():
                     break
         return generated
+
+    def quant_lastN_kv_cache(self, kv_cache, quantKV_count):
+        for i in range(len(kv_cache.key_cache)):
+            kv_cache.key_cache[i][:, :, :-quantKV_count, ...] = self.linear_quantizer.quantize(kv_cache.key_cache[i][:, :, :-quantKV_count, ...], 4, 128)
+            kv_cache.key_cache[i].contiguous()
+            kv_cache.value_cache[i][:, :, :-quantKV_count, ...] = self.linear_quantizer.quantize(kv_cache.value_cache[i][:, :, :-quantKV_count, ...], 4, 128)
+            kv_cache.value_cache[i].contiguous()
+        return kv_cache
+    
+
+
+class LinearQuantize:
+    def quant_func(self, x, scale, zero, maxq):
+        q = torch.clamp(torch.round(x / scale) + zero, 0, maxq)
+        return q.to(torch.uint8)
+
+    def _quantize(self, tensor, nbits, q_group_size):
+        batch_size, num_head, seq_len, embedding_dim = tensor.size()
+        assert embedding_dim % q_group_size == 0, "embedding_dim must be divisible by q_group_size"
+        x = tensor.view(batch_size, num_head, seq_len, embedding_dim // q_group_size, q_group_size).float()
+
+        maxq = torch.tensor(2 ** nbits - 1, device=x.device, dtype=x.dtype)
+        tmp = torch.zeros(x.shape[:-1], device=x.device, dtype=x.dtype)
+        xmin = torch.minimum(x.min(-1)[0], tmp)
+        xmax = torch.maximum(x.max(-1)[0], tmp)
+        tmp = (xmin == 0) & (xmax == 0)
+        xmin[tmp] = -1
+        xmax[tmp] = +1
+        scale = (xmax - xmin) / maxq
+        zero = torch.round(-xmin / scale)
+        scale = scale.unsqueeze(-1)
+        zero = zero.unsqueeze(-1)
+        out_int = self.quant_func(x, scale, zero, maxq)
+        return {
+            "int_tensor": out_int,
+            "scale": scale,
+            "zero": zero,
+            "original_type": tensor.dtype,
+        }
+    def _dequantize(self, qtensor):
+        int_tensor = qtensor["int_tensor"]
+        scale = qtensor["scale"]
+        zero = qtensor["zero"]
+        out_fp = (int_tensor.float() - zero) * scale
+        batch_size, num_head, seq_len, n_group, group_size = out_fp.size()
+        out_fp = out_fp.view(batch_size, num_head, seq_len, n_group * group_size).to(qtensor["original_type"])
+        return out_fp
+
+    def quantize(self, tensor, nbits, q_group_size):
+        qtensor = self._quantize(tensor, nbits, q_group_size)
+        return self._dequantize(qtensor)
