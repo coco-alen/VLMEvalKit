@@ -355,14 +355,14 @@ def main():
                 if args.judge is not None:
                     judge_kwargs['model'] = args.judge
                 else:
-                    if dataset.TYPE in ['MCQ', 'Y/N', 'MCQ_MMMU_Pro']:
+                    if dataset.TYPE in ['MCQ', 'Y/N', 'MCQ_MMMU_Pro'] or listinstr(['moviechat1k'], dataset_name.lower()):
                         if listinstr(['WeMath'], dataset_name):
                             judge_kwargs['model'] = 'gpt-4o-mini'
                         else:
                             judge_kwargs['model'] = 'chatgpt-0125'
                     elif listinstr(['MMVet', 'LLaVABench', 'MMBench-Video'], dataset_name):
                         judge_kwargs['model'] = 'gpt-4-turbo'
-                    elif listinstr(['MathVista', 'MathVerse', 'MathVision', 'DynaMath', 'VL-RewardBench', 'LogicVista'], dataset_name):  # noqa: E501
+                    elif listinstr(['MathVista', 'MathVerse', 'MathVision', 'DynaMath', 'VL-RewardBench', 'LogicVista', 'MOAT'], dataset_name):  # noqa: E501
                         judge_kwargs['model'] = 'gpt-4o-mini'
                     elif listinstr(['MMLongBench', 'MMDU', 'DUDE', 'SLIDEVQA', 'MIA-Bench', 'WildVision', 'MMAlignBench'], dataset_name):  # noqa: E501
                         judge_kwargs['model'] = 'gpt-4o'

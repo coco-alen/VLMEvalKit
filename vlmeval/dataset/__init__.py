@@ -10,7 +10,7 @@ from .image_mcq import (
 from .image_mt import MMDUDataset
 from .image_vqa import (
     ImageVQADataset, MathVision, OCRBench, MathVista, LLaVABench, MMVet, MTVQADataset, TableVQABench,
-    CustomVQADataset, CRPE, MathVerse, OlympiadBench, QSpatial, VizWiz, MMNIAH, LogicVista
+    CustomVQADataset, CRPE, MathVerse, OlympiadBench, QSpatial, VizWiz, MMNIAH, LogicVista, MME_CoT
 )
 
 from .image_ccocr import CCOCRDataset
@@ -35,10 +35,14 @@ from .longvideobench import LongVideoBench
 from .video_concat_dataset import ConcatVideoDataset
 from .mmgenbench import MMGenBench
 from .cgbench import CGBench_MCQ_Grounding_Mini, CGBench_OpenEnded_Mini, CGBench_MCQ_Grounding, CGBench_OpenEnded
+from .moviechat1k import MovieChat1k
+from .vdc import VDC
 from .worldsense import WorldSense
+from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
 
 from .miabench import MIABench
 from .cmmmu import CMMMU
+from .emma import EMMADataset
 from .wildvision import WildVision
 from .mmmath import MMMath
 from .dynamath import Dynamath
@@ -48,6 +52,7 @@ from .utils import *
 from .video_dataset_config import *
 from ..smp import *
 from .Omnidocbench.omnidocbench import OmniDocBench
+from .moat import MOAT
 
 
 class ConcatDataset(ImageBaseDataset):
@@ -137,21 +142,24 @@ class ConcatDataset(ImageBaseDataset):
 
 # Add new supported dataset class here
 IMAGE_DATASET = [
-    ImageCaptionDataset, ImageYORNDataset, ImageMCQDataset, ImageVQADataset, MathVision,
-    MMMUDataset, OCRBench, MathVista, LLaVABench, MMVet, MTVQADataset, TableVQABench,
-    MMLongBench, VCRDataset, MMDUDataset, DUDE, SlideVQA, MUIRDataset, CCOCRDataset,
-    GMAIMMBenchDataset, MMERealWorld, HRBenchDataset, CRPE, MathVerse, NaturalBenchDataset,
-    MIABench, OlympiadBench, WildVision, MMMath, QSpatial, Dynamath, MMGenBench, VizWiz, MMNIAH,
-    CMMMU, VLRewardBench, WeMath, LogicVista, MMMUProDataset, CreationMMBenchDataset,
-    ImageShortQADataset, MMAlignBench, OmniDocBench, VLM2Bench, VMCBenchDataset
+    ImageCaptionDataset, ImageYORNDataset, ImageMCQDataset, ImageVQADataset, 
+    MathVision, MMMUDataset, OCRBench, MathVista, LLaVABench, MMVet, 
+    MTVQADataset, TableVQABench, MMLongBench, VCRDataset, MMDUDataset, DUDE, 
+    SlideVQA, MUIRDataset, CCOCRDataset, GMAIMMBenchDataset, MMERealWorld, 
+    HRBenchDataset, CRPE, MathVerse, NaturalBenchDataset, MIABench, 
+    OlympiadBench, WildVision, MMMath, QSpatial, Dynamath, MMGenBench, VizWiz, 
+    MMNIAH, CMMMU, VLRewardBench, WeMath, LogicVista, MMMUProDataset, 
+    CreationMMBenchDataset, ImageShortQADataset, MMAlignBench, OmniDocBench, 
+    VLM2Bench, VMCBenchDataset, EMMADataset, MME_CoT, MOAT
 ]
 
 
 VIDEO_DATASET = [
-    MMBenchVideo, VideoMME, MVBench, MVBench_MP4, MVTamperBench, LongVideoBench,
+    MMBenchVideo, VideoMME, MVBench, MVBench_MP4, MVTamperBench, LongVideoBench, WorldSense, VDC, MovieChat1k, 
     MLVU, MLVU_MCQ, MLVU_OpenEnded,
     TempCompass, TempCompass_MCQ, TempCompass_Captioning, TempCompass_YorN,
-    CGBench_MCQ_Grounding_Mini, CGBench_OpenEnded_Mini, CGBench_MCQ_Grounding, CGBench_OpenEnded, WorldSense
+    CGBench_MCQ_Grounding_Mini, CGBench_OpenEnded_Mini, CGBench_MCQ_Grounding, CGBench_OpenEnded, 
+    QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
 ]
 
 TEXT_DATASET = [
@@ -164,7 +172,7 @@ CUSTOM_DATASET = [
 
 DATASET_COLLECTION = [ConcatDataset, ConcatVideoDataset]
 
-DATASET_CLASSES = IMAGE_DATASET + VIDEO_DATASET + TEXT_DATASET + CUSTOM_DATASET + DATASET_COLLECTION
+DATASET_CLASSES = IMAGE_DATASET + VIDEO_DATASET + TEXT_DATASET + CUSTOM_DATASET + DATASET_COLLECTION  # noqa: E501
 SUPPORTED_DATASETS = []
 for DATASET_CLS in DATASET_CLASSES:
     SUPPORTED_DATASETS.extend(DATASET_CLS.supported_datasets())
@@ -184,7 +192,7 @@ def DATASET_TYPE(dataset, *, default: str = 'MCQ') -> str:
 
     if 'openended' in dataset.lower():
         return 'VQA'
-    warnings.warn(f'Dataset {dataset} is a custom one and not annotated as `openended`, will treat as {default}. ')
+    warnings.warn(f'Dataset {dataset} is a custom one and not annotated as `openended`, will treat as {default}. ')  # noqa: E501
     return default
 
 
