@@ -5,7 +5,7 @@ import sys
 from .base import BaseModel
 from ..smp import *
 from ..dataset import DATASET_TYPE
-
+from transformers import BitsAndBytesConfig
 
 class llama_vision(BaseModel):
 
@@ -91,6 +91,13 @@ class llama_vision(BaseModel):
                 model_path,
                 torch_dtype=torch.bfloat16,
                 device_map='cpu',
+                quantization_config=BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    # bnb_4bit_compute_dtype=torch.int8,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type='nf4'
+                ),
                 **kwargs
             ).eval().to("cuda")
 
