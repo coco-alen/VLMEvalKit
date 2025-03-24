@@ -300,7 +300,7 @@ class llama_vision(BaseModel):
                     next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
 
-                print(self.get_llm_outText(next_token[0]), end="")
+                # print(self.get_llm_outText(next_token[0]), end="")
                 generated = torch.cat((generated, next_token), dim=-1)
                 # sign = self.get_llm_outText(generated[0,-4:])
                 # sign2 = self.get_llm_outText(generated[0,-5:])
@@ -363,12 +363,11 @@ class llama_vision(BaseModel):
 
     def quant_lastN_kv_cache(self, kv_cache, quantKV_count):
         for i in range(len(kv_cache.key_cache)):
-            kv_cache.key_cache[i][:, :, :-quantKV_count, ...] = self.linear_quantizer.quantize(kv_cache.key_cache[i][:, :, :-quantKV_count, ...], 4, 128)
+            kv_cache.key_cache[i][:, :, -quantKV_count:, ...] = self.linear_quantizer.quantize(kv_cache.key_cache[i][:, :, -quantKV_count:, ...], 3, 128)
             kv_cache.key_cache[i].contiguous()
-            kv_cache.value_cache[i][:, :, :-quantKV_count, ...] = self.linear_quantizer.quantize(kv_cache.value_cache[i][:, :, :-quantKV_count, ...], 4, 128)
+            kv_cache.value_cache[i][:, :, -quantKV_count:, ...] = self.linear_quantizer.quantize(kv_cache.value_cache[i][:, :, -quantKV_count:, ...], 3, 128)
             kv_cache.value_cache[i].contiguous()
         return kv_cache
-    
 
 
 class LinearQuantize:
