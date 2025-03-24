@@ -323,7 +323,7 @@ class llama_vision(BaseModel):
                         model = self.model
 
 
-                if self.quant_kv_stage == "summary":
+                if self.quant_kv_stage == "summary" or self.quant_kv_stage == "all":
                     quantKV_count = 0
                     count_start = False
                     if self.get_llm_outText(generated[0,-4:]).strip() == "<SUMMARY>":
@@ -334,7 +334,7 @@ class llama_vision(BaseModel):
                         count_start = False
                     if count_start:
                         quantKV_count += 1
-                if self.quant_kv_stage == "reasoning":
+                if self.quant_kv_stage == "reasoning" or self.quant_kv_stage == "all":
                     quantKV_count = 0
                     count_start = False
                     if self.get_llm_outText(generated[0,-5:]).strip() == "<REASONING>":
@@ -345,7 +345,7 @@ class llama_vision(BaseModel):
                         count_start = False
                     if count_start:
                         quantKV_count += 1
-                if self.quant_kv_stage == "caption":
+                if self.quant_kv_stage == "caption" or self.quant_kv_stage == "all":
                     quantKV_count = 0
                     count_start = False
                     if self.get_llm_outText(generated[0,-4:]).strip() == "<CAPTION>":

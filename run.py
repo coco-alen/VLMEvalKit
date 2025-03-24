@@ -151,7 +151,7 @@ You can launch the evaluation by setting either --data and --model or --config.
     parser.add_argument('--reuse-aux', type=bool, default=True, help='reuse auxiliary evaluation files')
     parser.add_argument('--qbits', type=int, default=16, choices=[3,4,8,16], help='quantization bits for the model')
     parser.add_argument('--quant_stage', type=str, default="", choices=["","summary","caption","reasoning"], help='quantization bits for the model')
-    parser.add_argument('--quant_kv_stage', type=str, default="", choices=["","summary","caption","reasoning"], help='quant kv cache of chosen stage to 4bit')
+    parser.add_argument('--quant_kv_stage', type=str, default="", choices=["","summary","caption","reasoning","all"], help='quant kv cache of chosen stage to 4bit')
 
     args = parser.parse_args()
     return args
